@@ -57,13 +57,14 @@ jobs:
           name: dist
           path: dist/
 
-      - name: Install built package
-        run: |
-          pip install dist/*.whl
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
 
-      - name: Test import
+      - name: Install and test built package
         run: |
-          python -c "import cutia; print('✓ Import successful')"
+          WHEEL_FILE=$(ls dist/*.whl | head -1)
+          uv pip install "$WHEEL_FILE" --system
+          uv run --no-project python -c "import cutia; print('✓ Import successful')"
 
   publish-pypi:
     name: Publish to PyPI
@@ -86,8 +87,6 @@ jobs:
     name: Create GitHub Release
     needs: publish-pypi
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
     steps:
       - name: Download distributions
         uses: actions/download-artifact@v4
