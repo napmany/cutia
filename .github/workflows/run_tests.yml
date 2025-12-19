@@ -1,0 +1,136 @@
+name: Lint, Test, and Build
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [main, release-*]
+  pull_request:
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+jobs:
+  fix:
+    name: Check Ruff Fix
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv with caching
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+      - name: Create and activate virtual environment
+        run: |
+          uv venv .venv --python 3.12
+          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+      - name: Install dependencies
+        run: uv sync -p .venv --extra dev
+      - name: Ruff Check
+        run: |
+          uv run -p .venv ruff check --fix-only --diff --exit-non-zero-on-fix || (
+            echo ""
+            echo "❌ Ruff found issues that can be fixed automatically."
+            echo "💡 To fix them locally, run:"
+            echo ""
+            echo "    pre-commit run --all-files"
+            echo ""
+            echo "Then commit and push the changes."
+            exit 1
+          )
+
+  typecheck:
+    name: Type Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv with caching
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+      - name: Create and activate virtual environment
+        run: |
+          uv venv .venv --python 3.12
+          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+      - name: Install dependencies
+        run: uv sync -p .venv --extra dev
+      - name: Run Pyright
+        run: uv run -p .venv pyright
+
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv with caching
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+      - name: Create and activate virtual environment
+        run: |
+          uv venv .venv
+          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+      - name: Install dependencies
+        run: |
+          uv sync -p .venv --extra dev
+          uv pip list
+      - name: Run lint with tests
+        uses: chartboost/ruff-action@v1
+        with:
+          args: check --fix-only
+      - name: Run tests with pytest
+        run: uv run -p .venv pytest -vv tests/
+
+  build_package:
+    name: Build Package
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv with caching
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            **/pyproject.toml
+            **/uv.lock
+      - name: Create and activate virtual environment
+        run: |
+          uv venv .venv
+          echo "${{ github.workspace }}/.venv/bin" >> $GITHUB_PATH
+      - name: Install dependencies
+        run: uv sync -p .venv --extra dev
+      - name: Build
+        run: uv build
+      - name: Install built package
+        run: uv pip install dist/*.whl -p .venv
+      - name: Test import cutia
+        run: uv run -p .venv python -c "import cutia"

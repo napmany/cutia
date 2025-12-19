@@ -1,0 +1,128 @@
+[project]
+name = "cutia"
+version = "0.0.1"
+description = "Tree-based prompt compression library using cut-then-transform strategy for LLM applications"
+readme = "README.md"
+authors = [
+    { name = "Aleksei Leshikhin", email = "napmany@outlook.com" }
+]
+requires-python = ">=3.10, <3.15"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Text Processing :: Linguistic",
+    "Typing :: Typed",
+]
+keywords = ["prompt-compression", "llm", "dspy", "nlp", "optimization", "ai", "machine-learning"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/napmany/cutia"
+Documentation = "https://github.com/napmany/cutia#readme"
+Repository = "https://github.com/napmany/cutia"
+Issues = "https://github.com/napmany/cutia/issues"
+
+[project.optional-dependencies]
+# Core testing dependencies
+test = [
+    "pytest>=8.0.0",
+    "dspy-ai>=3.0.0",  # Required for adapter testing
+]
+
+# Development dependencies (includes test)
+dev = [
+    "cutia[test]",
+    "ruff>=0.3.0",
+    "pre-commit",
+    "pyright>=1.1.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = "test_*.py"
+python_classes = "Test*"
+python_functions = "test_*"
+addopts = ["-v", "--strict-markers", "--tb=short"]
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "integration: marks tests as integration tests requiring real LLMs",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+src = ["src"]
+indent-width = 4
+
+[tool.ruff.lint]
+select = [
+    "E",    # Pycodestyle errors
+    "W",    # Pycodestyle warnings
+    "F",    # Pyflakes
+    "I",    # Import sorting (isort)
+    "C",    # Comprehension style
+    "B",    # Bugbear checks
+    "UP",   # Python upgrade/modernization
+    "N",    # PEP 8 naming conventions
+    "RUF",  # Ruff-specific rules
+    "Q",    # Quote style enforcement
+]
+
+ignore = [
+    "E501",   # Line too long (delegated to formatter)
+    "C901",   # Complexity checking
+    "E741",   # Ambiguous variable name
+    "N818",   # Exception name should end with 'Error'
+    "B905",   # zip() without explicit strict= parameter
+    "B007",   # Loop control variable not used within loop body
+    "UP007",  # Use X | Y for type annotations
+    "RUF001", # Ambiguous unicode character string
+    "RUF002", # Ambiguous unicode character docstring
+    "RUF003", # Ambiguous unicode character comment
+    "UP006",  # Use list instead of List for type annotations
+    "RUF005", # Consider unpacking instead of concatenation
+]
+
+[tool.ruff.lint.isort]
+known-first-party = ["cutia"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["B018", "S101"]  # Allow assertions and unused expressions in tests
+"**/__init__.py" = ["F401"]  # Allow unused imports
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+
+[tool.pyright]
+include = ["src"]
+exclude = [
+  "src/cutia/adapters/dspy_adapter",
+  "tests"
+]
+typeCheckingMode = "standard"
+pythonVersion = "3.10"
+pythonPlatform = "All"
+
+# Reporting options
+reportMissingImports = true
+reportMissingTypeStubs = "warning"
+reportUnusedImport = "warning"
+reportUnusedVariable = "warning"
+reportDuplicateImport = "error"
+
+[build-system]
+requires = ["uv_build>=0.9.7,<0.10.0"]
+build-backend = "uv_build"
