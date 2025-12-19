@@ -1,3 +1,5 @@
+<img width="1728" height="624" alt="cutia" src="https://github.com/user-attachments/assets/fbbe453c-597f-4d6f-b5c5-fe17d26514aa" />
+
 # CUTIA - Cut-Then-Implement-Augment Prompt Compressor
 
 CUTIA is a tree-based prompt compression library that uses a cut-then-transform strategy to compress prompts while maintaining quality.
