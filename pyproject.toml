@@ -112,6 +112,7 @@ line-ending = "auto"
 include = ["src"]
 exclude = [
   "src/cutia/adapters/dspy_adapter",
+  "src/cutia/examples",
   "tests"
 ]
 typeCheckingMode = "standard"

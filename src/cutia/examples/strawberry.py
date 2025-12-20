@@ -304,7 +304,7 @@ def run_example(ai_provider="localai"):
     print("\n" + "=" * 60)
     print("STAGE 2: MIPROv2 Optimization")
     print("=" * 60)
-    print("Optimizing with MIPROv2 (auto=light)...")
+    print("Optimizing with MIPROv2...")
     print("This may take several minutes...")
     print()
 
