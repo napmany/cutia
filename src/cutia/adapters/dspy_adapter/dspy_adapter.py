@@ -230,7 +230,7 @@ class CUTIA(Teleprompter):
         target_compression_ratio: float = 0.5,
         verbose: bool = True,
         track_stats: bool = True,
-        num_threads: int = 24,
+        num_threads: int = 8,
         num_candidates: int = 4,
         candidate_seed_offset: int = 1000,
         seed: int = 42,

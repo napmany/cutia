@@ -33,13 +33,15 @@ Repository = "https://github.com/napmany/cutia"
 Issues = "https://github.com/napmany/cutia/issues"
 
 [project.optional-dependencies]
-# Core testing dependencies
-test = [
-    "pytest>=8.0.0",
-    "dspy-ai>=3.0.0",  # Required for adapter testing
+full = [
+    "datasets>=2.14.0",
+    "python-dotenv>=1.0.0",
 ]
-
-# Development dependencies (includes test)
+test = [
+    "cutia[full]",
+    "pytest>=8.0.0",
+    "dspy>=3.0.0",
+]
 dev = [
     "cutia[test]",
     "ruff>=0.3.0",
@@ -110,6 +112,7 @@ line-ending = "auto"
 include = ["src"]
 exclude = [
   "src/cutia/adapters/dspy_adapter",
+  "src/cutia/examples",
   "tests"
 ]
 typeCheckingMode = "standard"

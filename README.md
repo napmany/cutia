@@ -26,7 +26,7 @@ For development with testing and linting tools:
 
 ```bash
 # Clone the repository
-git clone <repository-url>
+git clone https://github.com/napmany/cutia.git
 cd cutia
 
 # Install with development dependencies
@@ -56,10 +56,7 @@ optimizer = CUTIA(
     prompt_model=prompt_model,
     task_model=task_model,
     metric=your_metric,
-    quality_mode="strict",  # "strict", "balanced", or "aggressive"
-    target_compression_ratio=0.5,
     num_candidates=4,
-    traversal_strategy="pre_order",  # "pre_order", "post_order", or "random"
 )
 
 # Compile your program
@@ -70,27 +67,13 @@ compressed_program = optimizer.compile(
 )
 ```
 
-### Quality Modes
+## Examples
 
-CUTIA supports three quality modes:
+### Strawberry Problem (Letter Counting)
 
-- **`"strict"`**: No score degradation allowed (threshold: baseline + 0.0%)
-  - Use case: Safety-critical prompts, zero quality loss tolerance
-  - Expected compression: 10-20%
+Demonstrates prompt compression on a character counting task using the CharBench dataset.
 
-- **`"balanced"`**: Moderate degradation allowed (threshold: baseline - 5.0%) - **Default**
-  - Use case: Most applications, good quality/compression balance
-  - Expected compression: 25-40%
-
-- **`"aggressive"`**: Larger degradation allowed (threshold: baseline - 10.0%)
-  - Use case: Maximum compression priority, quality less critical
-  - Expected compression: 40-60%
-
-### Traversal Strategies
-
-- **`"post_order"`**: Process children before parent (bottom-up)
-- **`"pre_order"`**: Process parent before children (top-down)
-- **`"random"`**: Randomly choose between post-order and pre-order for each candidate
+See [src/cutia/examples/README.md](src/cutia/examples/README.md) for details.
 
 ## Development
 
@@ -108,14 +91,6 @@ uv run pytest tests/
 # Run with verbose output
 uv run pytest tests/ -v
 
-# Run specific test file
-uv run pytest tests/adapters/dspy_adapter/test_cutia_basic.py
-
-# Run specific test function
-uv run pytest tests/adapters/dspy_adapter/test_cutia_basic.py::test_cutia_basic_compile
-
-# Run tests with coverage (if pytest-cov installed)
-uv run pytest tests/ --cov=cutia --cov-report=term-missing
 ```
 
 ### Code Quality
@@ -149,28 +124,6 @@ make check         # Run all quality checks (linting, formatting, type checking)
 make fix           # Auto-fix linting and formatting issues
 ```
 
-### Type Checking
-
-The project uses Pyright for static type checking. The configuration is in `pyproject.toml` under `[tool.pyright]`.
-
-```bash
-# Run type checking manually
-uv run pyright
-
-# Run in watch mode (useful during development)
-make typecheck-watch
-```
-
-### Pre-commit Hooks
-
-```bash
-# Install pre-commit hooks
-pre-commit install
-
-# Run manually
-pre-commit run --all-files
-```
-
 ## How It Works
 
 1. **Tree Building**: The prompt is recursively split into segments (left, chunk, right)
@@ -185,15 +138,6 @@ pre-commit run --all-files
 
 ### Core
 - No required dependencies for the base library
-
-### Optional: DSPy Adapter
-- `dspy-ai>=3.0.0` - For DSPy integration
-
-### Development
-- `pytest>=8.0.0` - Testing framework
-- `ruff>=0.3.0` - Linting and formatting
-- `pyright>=1.1.0` - Static type checking
-- `pre-commit` - Git hooks
 
 Install optional dependencies:
 
