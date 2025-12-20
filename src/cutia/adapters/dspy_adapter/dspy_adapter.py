@@ -20,6 +20,12 @@ from .bounded_chat_adapter import BoundedChatAdapter
 
 logger = logging.getLogger(__name__)
 
+YELLOW = "\033[93m"
+GREEN = "\033[92m"
+BLUE = "\033[94m"
+BOLD = "\033[1m"
+ENDC = "\033[0m"
+
 # Quality mode type definition (following MIPROv2 auto parameter pattern)
 QualityModeType = Literal["strict", "balanced", "aggressive"]
 
@@ -228,7 +234,6 @@ class CUTIA(Teleprompter):
         quality_mode: QualityModeType = "strict",
         prompt_retries: int = 2,
         target_compression_ratio: float = 0.5,
-        verbose: bool = True,
         track_stats: bool = True,
         num_threads: int = 8,
         num_candidates: int = 4,
@@ -259,7 +264,6 @@ class CUTIA(Teleprompter):
         self.quality_mode = quality_mode
         self.prompt_retries = prompt_retries
         self.target_compression_ratio = target_compression_ratio
-        self.verbose = verbose
         self.track_stats = track_stats
         self.num_threads = num_threads
         self.num_candidates = num_candidates
@@ -362,12 +366,18 @@ class CUTIA(Teleprompter):
 
         # Calculate global baseline on VALSET for final selection
         # This ensures we compare final candidates against a consistent standard
+        logger.info("=" * 60)
+        logger.info("BASELINE EVALUATION")
+        logger.info("=" * 60)
         baseline_program = student.deepcopy()
         global_baseline = self._evaluate(baseline_program, valset)
-        logger.info(f"Global Baseline on VALSET: {global_baseline:.1f}%")
+        logger.info(f"Global Baseline on VALSET: {BOLD}{global_baseline:.1f}%{ENDC}")
 
         # Multi-Candidate Generation and Selection
-        logger.info(f"\nGenerating {self.num_candidates} compression candidates...")
+        logger.info(f"\n{'=' * 60}")
+        logger.info("CANDIDATE GENERATION")
+        logger.info("=" * 60)
+        logger.info(f"Generating {self.num_candidates} compression candidates...")
         logger.info("Each candidate uses its own baseline calculated on its trainset minibatch")
         candidates = []
 
@@ -396,12 +406,14 @@ class CUTIA(Teleprompter):
                 candidate_strategy = random.choice(["post_order", "pre_order"])
 
             logger.info(f"\n{'=' * 60}")
-            logger.info(f"Candidate {i + 1}/{self.num_candidates} (seed: {candidate_seed})")
-            logger.info(f"Strategy: {candidate_strategy}")
-            logger.info(f"Baseline: {candidate_baseline:.1f}% (on {len(node_decision_set)} TRAINSET examples)")
-            logger.info(f"Threshold: {candidate_baseline + MODE_THRESHOLDS[self.quality_mode]:.1f}%")
-            logger.info(f"Node decisions: {len(node_decision_set)} examples from TRAINSET")
-            logger.info(f"Final evaluation: {len(valset)} examples from VALSET")
+            logger.info(f"{BOLD}Candidate {i + 1}/{self.num_candidates}{ENDC} (seed: {candidate_seed})")
+            logger.info(f"  Strategy: {BLUE}{candidate_strategy}{ENDC}")
+            logger.info(
+                f"  Baseline: {BOLD}{candidate_baseline:.1f}%{ENDC} (on {len(node_decision_set)} TRAINSET examples)"
+            )
+            logger.info(f"  Threshold: {YELLOW}{candidate_baseline + MODE_THRESHOLDS[self.quality_mode]:.1f}%{ENDC}")
+            logger.info(f"  Node decisions: {len(node_decision_set)} examples from TRAINSET")
+            logger.info(f"  Final evaluation: {len(valset)} examples from VALSET")
             logger.info(f"{'=' * 60}")
 
             # Compress with specific seed and candidate-specific baseline
@@ -439,8 +451,8 @@ class CUTIA(Teleprompter):
 
             logger.info(
                 f"\nCandidate {i + 1}/{self.num_candidates}: "
-                f"Score: {score:.1f}% (on {len(valset)} VALSET examples), "
-                f"Compression: {compression_ratio:.2f}, "
+                f"Score: {GREEN}{BOLD}{score:.1f}%{ENDC} (on {len(valset)} VALSET examples), "
+                f"Compression: {BLUE}{BOLD}{compression_ratio:.2f}{ENDC}, "
                 f"Tokens: {compressed_tokens}/{original_tokens}, "
                 f"Strategy: {candidate_strategy}, "
                 f"Node decisions based on: {len(node_decision_set)} TRAINSET examples"
@@ -448,19 +460,19 @@ class CUTIA(Teleprompter):
 
         # Select best candidate using configured strategy
         logger.info(f"\n{'=' * 60}")
-        logger.info("Candidate Selection Summary")
+        logger.info("CANDIDATE SELECTION SUMMARY")
         logger.info(f"{'=' * 60}")
-        logger.info(f"Strategy: {self.candidate_selection}")
-        logger.info(f"Global Baseline (VALSET): {global_baseline:.1f}%")
+        logger.info(f"Strategy: {BLUE}{self.candidate_selection}{ENDC}")
+        logger.info(f"Global Baseline (VALSET): {BOLD}{global_baseline:.1f}%{ENDC}")
         logger.info("Candidate-specific baselines used for node decisions")
-        logger.info(f"Quality mode: {self.quality_mode}")
-        logger.info(f"Threshold offset: {MODE_THRESHOLDS[self.quality_mode]:+.1f}%")
+        logger.info(f"Quality mode: {YELLOW}{self.quality_mode}{ENDC}")
+        logger.info(f"Threshold offset: {YELLOW}{MODE_THRESHOLDS[self.quality_mode]:+.1f}%{ENDC}")
         logger.info("\nCandidate Results:")
         for i, c in enumerate(candidates, 1):
             logger.info(
-                f"  {i}. Baseline: {c['candidate_baseline']:.1f}%, "
-                f"Score: {c['score']:.1f}%, "
-                f"Compression: {c['compression_ratio']:.2f}, "
+                f"  {i}. Baseline: {BOLD}{c['candidate_baseline']:.1f}%{ENDC}, "
+                f"Score: {GREEN}{c['score']:.1f}%{ENDC}, "
+                f"Compression: {BLUE}{c['compression_ratio']:.2f}{ENDC}, "
                 f"Tokens: {c['compressed_tokens']}/{c['original_tokens']}, "
                 f"Strategy: {c['strategy']}, "
                 f"Seed: {c['seed']}"
@@ -469,22 +481,25 @@ class CUTIA(Teleprompter):
         top_candidates = self._select_best_candidate(candidates, global_baseline, score_key="score")
         top_k = len(top_candidates)
 
-        logger.info(f"\nTop-{top_k} candidates by strategy ({self.candidate_selection}):")
+        logger.info(f"\nTop-{top_k} candidates by strategy ({BLUE}{self.candidate_selection}{ENDC}):")
         for rank, c in enumerate(top_candidates, 1):
             logger.info(
                 f"  {rank}. Candidate #{candidates.index(c) + 1}: "
-                f"VALSET Score: {c['score']:.1f}%, "
-                f"Compression: {c['compression_ratio']:.2f}, "
+                f"VALSET Score: {GREEN}{c['score']:.1f}%{ENDC}, "
+                f"Compression: {BLUE}{c['compression_ratio']:.2f}{ENDC}, "
                 f"Strategy: {c['strategy']}, "
                 f"Seed: {c['seed']}"
             )
 
-        logger.info(f"\nRe-evaluating Top-{top_k} candidates on TRAINSET: {len(trainset)} examples")
+        logger.info(f"\n{'=' * 60}")
+        logger.info(f"TOP-{top_k} RE-EVALUATION ON TRAINSET")
+        logger.info(f"{'=' * 60}")
+        logger.info(f"Re-evaluating Top-{top_k} candidates on TRAINSET: {len(trainset)} examples")
         for c in top_candidates:
             c["trainset_score"] = self._evaluate(c["program"], trainset)
             logger.info(
-                f"  Candidate #{candidates.index(c) + 1}: TRAINSET Score: {c['trainset_score']:.1f}% "
-                f"(VALSET: {c['score']:.1f}%, Compression: {c['compression_ratio']:.2f})"
+                f"  Candidate #{candidates.index(c) + 1}: TRAINSET Score: {GREEN}{c['trainset_score']:.1f}%{ENDC} "
+                f"(VALSET: {c['score']:.1f}%, Compression: {BLUE}{c['compression_ratio']:.2f}{ENDC})"
             )
 
         # Use the same selection strategy for the final decision, but based on TRAINSET scores
@@ -492,11 +507,14 @@ class CUTIA(Teleprompter):
         final_selection = self._select_best_candidate(top_candidates, global_baseline, score_key="trainset_score")
         best = final_selection[0]
 
-        logger.info(f"\nSelected Candidate (best-of-best): #{candidates.index(best) + 1}")
-        logger.info(f"  TRAINSET Score: {best.get('trainset_score', 0.0):.1f}%")
-        logger.info(f"  VALSET Score: {best['score']:.1f}%")
-        logger.info(f"  Compression Ratio: {best['compression_ratio']:.2f}")
-        logger.info(f"  Token Reduction: {best['original_tokens'] - best['compressed_tokens']} tokens")
+        logger.info(f"\n{'=' * 60}")
+        logger.info("FINAL SELECTION")
+        logger.info(f"{'=' * 60}")
+        logger.info(f"{GREEN}{BOLD}Selected Candidate (best-of-best): #{candidates.index(best) + 1}{ENDC}")
+        logger.info(f"  TRAINSET Score: {GREEN}{BOLD}{best.get('trainset_score', 0.0):.1f}%{ENDC}")
+        logger.info(f"  VALSET Score: {GREEN}{best['score']:.1f}%{ENDC}")
+        logger.info(f"  Compression Ratio: {BLUE}{BOLD}{best['compression_ratio']:.2f}{ENDC}")
+        logger.info(f"  Token Reduction: {BOLD}{best['original_tokens'] - best['compressed_tokens']}{ENDC} tokens")
         logger.info(f"{'=' * 60}")
 
         # Track all candidates if requested
@@ -546,20 +564,17 @@ class CUTIA(Teleprompter):
             if not original_instructions:
                 continue
 
-            if self.verbose:
-                logger.info(f"Compressing instructions for predictor {i}: {original_instructions[:50]}...")
+            logger.info(f"Compressing instructions for predictor {i}: {original_instructions[:50]}...")
 
             # Build Tree
-            if self.verbose:
-                logger.info("Building segment tree...")
+            logger.info("Building segment tree...")
 
             if self.parallel_tree_building:
                 root_node = self._build_tree_parallel(original_instructions, depth=0, node_id="root")
             else:
                 root_node = self._build_tree(original_instructions, depth=0, node_id="root")
 
-            if self.verbose:
-                logger.info("Tree built.")
+            logger.info("Tree built.")
 
             # Compress (Traverse and Optimize)
             self._process_node(
@@ -580,10 +595,9 @@ class CUTIA(Teleprompter):
             set_signature(predictor, updated_signature)
 
             # Log stats
-            if self.verbose:
-                logger.info(
-                    f"Final instructions length: {len(final_instructions)} (Original: {len(original_instructions)})"
-                )
+            logger.info(
+                f"Final instructions length: {len(final_instructions)} (Original: {len(original_instructions)})"
+            )
 
             all_stats[i] = {
                 "original_length": len(original_instructions),
@@ -807,19 +821,16 @@ class CUTIA(Teleprompter):
         return s
 
     def _build_tree(self, text: str, depth: int, node_id: str) -> SegmentNode:
-        if self.verbose:
-            logger.info(f"Building tree node {node_id} (Depth {depth}, Length {len(text)})")
+        logger.info(f"Building tree node {node_id} (Depth {depth}, Length {len(text)})")
 
         node = SegmentNode(node_id=node_id, depth=depth, text=text)
 
         if depth >= self.max_depth:
-            if self.verbose:
-                logger.info(f"  Leaf: Max depth reached at {node_id}")
+            logger.info(f"  Leaf: Max depth reached at {node_id}")
             return node
 
         if len(text) < self.min_chunk_chars:
-            if self.verbose:
-                logger.info(f"  Leaf: Text too short at {node_id} ({len(text)} < {self.min_chunk_chars})")
+            logger.info(f"  Leaf: Text too short at {node_id} ({len(text)} < {self.min_chunk_chars})")
             return node
 
         # Call LLM to propose split
@@ -828,15 +839,13 @@ class CUTIA(Teleprompter):
         for attempt in range(self.prompt_retries + 1):
             try:
                 self.stats["llm_calls"] += 1
-                if self.verbose:
-                    logger.info(f"  Requesting split for {node_id} (Attempt {attempt + 1})")
+                logger.info(f"  Requesting split for {node_id} (Attempt {attempt + 1})")
 
                 # Use BoundedChatAdapter for clear input/output boundaries
                 with dspy.settings.context(trace=[], lm=self.prompt_model, adapter=BoundedChatAdapter()):
                     pred = proposer(instraction_to_analyze=text)
-                    if self.verbose:
-                        logger.info(f"  Proposer prediction: {pred}")
-                    # if self.verbose and hasattr(self.prompt_model, "history") and self.prompt_model.history:
+                    logger.info(f"  Proposer prediction: {pred}")
+                    # if hasattr(self.prompt_model, "history") and self.prompt_model.history:
                     #     logger.info(f"  Full Prompt: {self.prompt_model.history[-1]}")
                     #     exit()
 
@@ -845,8 +854,7 @@ class CUTIA(Teleprompter):
                     has_chunk = has_chunk.lower() == "true"
 
                 if not has_chunk:
-                    if self.verbose:
-                        logger.info(f"  No chunk proposed for {node_id}")
+                    logger.info(f"  No chunk proposed for {node_id}")
                     return node
 
                 left = self._clean_llm_string(getattr(pred, "left", None))
@@ -858,19 +866,17 @@ class CUTIA(Teleprompter):
                 # chunk = self._strip_dspy_markers(chunk)
                 # right = self._strip_dspy_markers(right)
 
-                if self.verbose:
-                    logger.info(f"  Original prompt segment: {text}")
-                    logger.info(f"  Left: {left}")
-                    logger.info(f"  Chunk: {chunk}")
-                    logger.info(f"  Right: {right}")
-                    logger.info(f"  Proposed split: L={len(left)}, C={len(chunk)}, R={len(right)}")
+                logger.info(f"  Original prompt segment: {text}")
+                logger.info(f"  Left: {left}")
+                logger.info(f"  Chunk: {chunk}")
+                logger.info(f"  Right: {right}")
+                logger.info(f"  Proposed split: L={len(left)}, C={len(chunk)}, R={len(right)}")
 
                 # Enable LLM-based reconstruction validation
                 reconstructed = left + chunk + right
 
                 if not self._validate_reconstruction(text, reconstructed):
-                    if self.verbose:
-                        logger.warning(f"  Reconstruction validation failed at {node_id}")
+                    logger.warning(f"  Reconstruction validation failed at {node_id}")
                     continue  # Retry with next attempt
 
                 # If valid, populate node
@@ -879,8 +885,7 @@ class CUTIA(Teleprompter):
                 node.right_text = right
                 node.chunk_reason = getattr(pred, "chunk_reason", None)
 
-                if self.verbose:
-                    logger.info(f"  Split accepted for {node_id}")
+                logger.info(f"  Split accepted for {node_id}")
 
                 # Recurse
                 if left and len(left) >= self.min_chunk_chars:
@@ -894,8 +899,7 @@ class CUTIA(Teleprompter):
             except Exception as e:
                 logger.warning(f"Error building tree at {node_id}: {e}")
 
-        if self.verbose:
-            logger.info(f"  Failed to split node {node_id} after retries")
+        logger.info(f"  Failed to split node {node_id} after retries")
         return node
 
     def _generate_split(self, node: SegmentNode) -> SegmentNode:
@@ -988,8 +992,7 @@ class CUTIA(Teleprompter):
                         )
 
                     if not current_candidates:
-                        if self.verbose:
-                            logger.info(f"  Rewrite attempt {attempt + 1} failed: rewrites not smaller than original.")
+                        logger.info(f"  Rewrite attempt {attempt + 1} failed: rewrites not smaller than original.")
                         continue
 
                 else:
@@ -1000,8 +1003,7 @@ class CUTIA(Teleprompter):
                         pred = rewriter(text=node.chunk_text, target_length=str(target_len))
 
                     if not pred.rewritten_text or len(pred.rewritten_text) >= len(node.chunk_text):
-                        if self.verbose:
-                            logger.info(f"  Rewrite attempt {attempt + 1} failed: rewrite not smaller than original.")
+                        logger.info(f"  Rewrite attempt {attempt + 1} failed: rewrite not smaller than original.")
                         continue
 
                     current_candidates.append(
@@ -1040,12 +1042,11 @@ class CUTIA(Teleprompter):
             # Parallel split
             executor = ParallelExecutor(
                 num_threads=self.tree_building_threads,
-                disable_progress_bar=not self.verbose,
+                disable_progress_bar=False,
                 max_errors=100,  # Allow failures
             )
 
-            if self.verbose:
-                logger.info(f"Parallel splitting {len(nodes_to_split)} nodes at depth {nodes_to_split[0].depth}...")
+            logger.info(f"Parallel splitting {len(nodes_to_split)} nodes at depth {nodes_to_split[0].depth}...")
 
             executor.execute(self._generate_split, nodes_to_split)
 
@@ -1073,12 +1074,11 @@ class CUTIA(Teleprompter):
                 stack.append(node.right_child)
 
         if nodes_with_chunks:
-            if self.verbose:
-                logger.info(f"Parallel generating rewrites for {len(nodes_with_chunks)} chunks...")
+            logger.info(f"Parallel generating rewrites for {len(nodes_with_chunks)} chunks...")
 
             executor = ParallelExecutor(
                 num_threads=self.tree_building_threads,
-                disable_progress_bar=not self.verbose,
+                disable_progress_bar=False,
                 max_errors=100,
             )
             executor.execute(self._generate_rewrites, nodes_with_chunks)
@@ -1133,7 +1133,7 @@ class CUTIA(Teleprompter):
 
             is_valid = getattr(result, "is_valid", "no").lower().strip()
 
-            if self.verbose and is_valid == "no":
+            if is_valid == "no":
                 reasoning = getattr(result, "reasoning", "")
                 logger.info(f"  Reconstruction invalid: {reasoning}")
 
@@ -1149,13 +1149,11 @@ class CUTIA(Teleprompter):
         """
         # Only process if we have a chunk to cut/rewrite
         if not node.chunk_text:
-            if self.verbose:
-                logger.info(f"Skipping processing for node {node.node_id} (no chunk text)")
+            logger.info(f"Skipping processing for node {node.node_id} (no chunk text)")
             return
 
-        if self.verbose:
-            logger.info(f"\nProcessing Node {node.node_id} (Depth {node.depth})")
-            logger.info(f"  Chunk Text: {node.chunk_text!r}")
+        logger.info(f"\nProcessing Node {node.node_id} (Depth {node.depth})")
+        logger.info(f"  Chunk Text: {node.chunk_text!r}")
 
         # Attempt Cut
         if self._attempt_cut(node, root, predictor, program, baseline_score, eval_set):
@@ -1220,12 +1218,10 @@ class CUTIA(Teleprompter):
 
     def _attempt_cut(self, node: SegmentNode, root: SegmentNode, predictor, program, baseline_score, eval_set) -> bool:
         if not self.enable_cutting:
-            if self.verbose:
-                logger.info("  Skipping CUT (disabled)")
+            logger.info("  Skipping CUT (disabled)")
             return False
 
-        if self.verbose:
-            logger.info("  Attempting CUT...")
+        logger.info("  Attempting CUT...")
 
         original_status = node.status
         node.status = "cut"
@@ -1241,18 +1237,18 @@ class CUTIA(Teleprompter):
         threshold = baseline_score + MODE_THRESHOLDS[self.quality_mode]
 
         if score >= threshold:
-            if self.verbose:
-                logger.info(f"  Decision: CUT accepted at {node.node_id}")
-                logger.info(f"  Score: {score:.1f}% (Baseline: {baseline_score:.1f}%, Threshold: {threshold:.1f}%)")
-                logger.info(f"  Saved: {len(node.chunk_text.split())} tokens (approx)")
+            logger.info(f"{GREEN}  Decision: CUT accepted at {node.node_id}{ENDC}")
+            logger.info(
+                f"  Score: {GREEN}{BOLD}{score:.1f}%{ENDC} (Baseline: {baseline_score:.1f}%, Threshold: {YELLOW}{threshold:.1f}%{ENDC})"
+            )
+            logger.info(f"  Saved: {BOLD}{len(node.chunk_text.split())}{ENDC} tokens (approx)")
 
             node.score_after = score
             node.saved_tokens = len(node.chunk_text.split())  # Approx
             self.stats["nodes_cut"] += 1
             return True
-        if self.verbose:
-            logger.info(f"  Decision: CUT rejected at {node.node_id}")
-            logger.info(f"  Score: {score:.1f}% (Threshold: {threshold:.1f}%)")
+        logger.info(f"  Decision: CUT rejected at {node.node_id}")
+        logger.info(f"  Score: {score:.1f}% (Threshold: {threshold:.1f}%)")
 
         # Revert
         node.status = original_status
@@ -1264,8 +1260,7 @@ class CUTIA(Teleprompter):
     def _attempt_rewrite(
         self, node: SegmentNode, root: SegmentNode, predictor, program, baseline_score, eval_set
     ) -> bool:
-        if self.verbose:
-            logger.info("  Attempting REWRITE...")
+        logger.info("  Attempting REWRITE...")
 
         original_status = node.status
         signature = get_signature(predictor)
@@ -1291,8 +1286,7 @@ class CUTIA(Teleprompter):
 
         # Try each candidate
         for i, rewritten in enumerate(candidates_to_try):
-            if self.verbose:
-                logger.info(f"  Trying Rewrite Variant {i + 1}/{len(candidates_to_try)}: {rewritten!r}")
+            logger.info(f"  Trying Rewrite Variant {i + 1}/{len(candidates_to_try)}: {rewritten!r}")
 
             # Apply change
             node.status = "rewritten"
@@ -1309,21 +1303,21 @@ class CUTIA(Teleprompter):
                 threshold = baseline_score + MODE_THRESHOLDS[self.quality_mode]
 
                 if score >= threshold:
-                    if self.verbose:
-                        logger.info(f"  Decision: REWRITE accepted at {node.node_id} (Variant {i + 1})")
-                        logger.info(
-                            f"  Score: {score:.1f}% (Baseline: {baseline_score:.1f}%, Threshold: {threshold:.1f}%)"
-                        )
-                        logger.info(f"  Saved: {len(node.chunk_text.split()) - len(rewritten.split())} tokens (approx)")
+                    logger.info(f"{GREEN}  Decision: REWRITE accepted at {node.node_id} (Variant {i + 1}){ENDC}")
+                    logger.info(
+                        f"  Score: {GREEN}{BOLD}{score:.1f}%{ENDC} (Baseline: {baseline_score:.1f}%, Threshold: {YELLOW}{threshold:.1f}%{ENDC})"
+                    )
+                    logger.info(
+                        f"  Saved: {BOLD}{len(node.chunk_text.split()) - len(rewritten.split())}{ENDC} tokens (approx)"
+                    )
 
                     node.score_after = score
                     node.saved_tokens = len(node.chunk_text.split()) - len(rewritten.split())
                     self.stats["nodes_rewritten"] += 1
                     return True
 
-                if self.verbose:
-                    logger.info(f"  Decision: REWRITE rejected at {node.node_id} (Variant {i + 1})")
-                    logger.info(f"  Score: {score:.1f}% (Threshold: {threshold:.1f}%)")
+                logger.info(f"  Decision: REWRITE rejected at {node.node_id} (Variant {i + 1})")
+                logger.info(f"  Score: {score:.1f}% (Threshold: {threshold:.1f}%)")
 
             except Exception as e:
                 logger.warning(f"Error evaluating rewrite at {node.node_id}: {e}")
