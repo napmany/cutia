@@ -67,7 +67,6 @@ def test_cutia_basic_compile():
         min_chunk_chars=200,  # High threshold to avoid splitting
         quality_mode="strict",
         target_compression_ratio=0.5,
-        verbose=False,  # Quiet during tests
         track_stats=True,
         num_threads=1,  # Single-threaded for deterministic test
         num_candidates=1,  # Single candidate for speed
@@ -115,7 +114,6 @@ def test_cutia_quality_modes():
             task_model=lm,
             metric=simple_metric,
             quality_mode=mode,
-            verbose=False,
         )
         assert optimizer.quality_mode == mode
 
@@ -131,6 +129,5 @@ def test_cutia_traversal_strategies():
             task_model=lm,
             metric=simple_metric,
             traversal_strategy=strategy,
-            verbose=False,
         )
         assert optimizer.traversal_strategy == strategy
