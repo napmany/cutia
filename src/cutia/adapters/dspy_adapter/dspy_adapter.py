@@ -85,43 +85,70 @@ class SegmentNode:
     rewrite_candidates: list[RewriteCandidate] | None = None
     split_attempts: int = 0  # Track retries during building
 
+    def _smart_delim(self, left: str, right: str) -> str:
+        """Add appropriate delimiter between two text segments.
+
+        Args:
+            left: Left text segment
+            right: Right text segment
+
+        Returns:
+            Delimiter to insert between segments
+        """
+        if not left or not right:
+            return ""
+
+        # Check if whitespace already exists
+        if left[-1] in " \t\n\r" or right[0] in " \t\n\r":
+            return ""
+
+        return " "
+
+    def _merge_segments(self, left: str, right: str) -> str:
+        """Merge two segments handling delimiters and double spaces."""
+        if not left:
+            return right
+        if not right:
+            return left
+
+        # Avoid double spaces
+        if left.endswith(" ") and right.startswith(" "):
+            right = right[1:]
+
+        delim = self._smart_delim(left, right)
+        return left + delim + right
+
     def get_rendered_text(self) -> str:
-        """Returns the text for this node based on its status and children."""
+        """Returns the text for this node based on its status and children.
+
+        PRD 63: Uses heuristic-based smart delimiters for reconstruction.
+        """
         if self.status == "cut":
-            # If cut, we might still have children if the cut happened at this level's chunk
-            # But wait, if we cut the *chunk*, what happens to left and right?
-            # The PRD says: "Attempt cut by removing chunk_text and stitching left_text + right_text"
-            # So if status is cut, we return left + right (potentially processed recursively)
-            # Actually, the PRD says: "Traverses nodes in post-order... Parent reconstruction uses the resolved child outputs"
-
-            # If this node is a leaf or we decided to cut/rewrite THIS node's focal chunk:
-            # The node represents a span. The split gave us left, chunk, right.
-            # If we cut 'chunk', we keep left and right.
-            # But left and right might be complex nodes themselves.
-
-            # Let's clarify:
-            # A node represents a text span.
-            # It is split into L, C, R.
-            # L and R become children nodes (left_child, right_child).
-            # C is the "focal chunk" at this level.
-
+            # Cut: left + right
             l_text = self.left_child.get_rendered_text() if self.left_child else (self.left_text or "")
             r_text = self.right_child.get_rendered_text() if self.right_child else (self.right_text or "")
 
-            return l_text + r_text
+            return self._merge_segments(l_text, r_text)
 
         if self.status == "rewritten":
+            # Rewritten: left + replacement + right
             l_text = self.left_child.get_rendered_text() if self.left_child else (self.left_text or "")
             r_text = self.right_child.get_rendered_text() if self.right_child else (self.right_text or "")
-            return l_text + (self.replacement_text or "") + r_text
+            repl = self.replacement_text or ""
 
-        # kept or pending
-        # If we have children, we must use them to reconstruct, because they might have cuts inside them
+            temp = self._merge_segments(l_text, repl)
+            return self._merge_segments(temp, r_text)
+
+        # Kept or pending: left + chunk + right
         if self.left_child or self.right_child:
             l_text = self.left_child.get_rendered_text() if self.left_child else (self.left_text or "")
-            c_text = self.chunk_text or ""  # The chunk at this level is kept
+            c_text = self.chunk_text or ""
             r_text = self.right_child.get_rendered_text() if self.right_child else (self.right_text or "")
-            return l_text + c_text + r_text
+
+            temp = self._merge_segments(l_text, c_text)
+            return self._merge_segments(temp, r_text)
+
+        logger.debug(f"[RECONSTRUCTION] Node {self.node_id} (LEAF): text={self.text!r}")
         return self.text
 
 
@@ -131,9 +158,9 @@ class ProposeChunk(dspy.Signature):
 
     IMPORTANT RULES:
     1. If no valid chunk can be found, respond with has_chunk=false and leave left, chunk, right as null.
-    2. If there is a valid chunk to consider for removal or rewrite - output exactly three parts: left, chunk, right; left + chunk + right must reconstruct the instraction_to_analyze EXACTLY.
-    3. Do NOT add any formatting, markers, or explanatory text in left, chunk, right fields.
-    4. Preserve all original whitespace and punctuation of the instraction_to_analyze.
+    2. If there is a valid chunk - output exactly three parts: left, chunk, right
+    3. left + chunk + right must reconstruct the instruction (whitespace will be normalized automatically)
+    4. Do NOT add formatting, markers, or explanatory text in the fields.
 
     The chunk you select could be:
     - Redundant or overly verbose content
@@ -142,7 +169,7 @@ class ProposeChunk(dspy.Signature):
     - Unnecessary explanations
     """
 
-    instraction_to_analyze = dspy.InputField(desc="The instraction to analyze")
+    instraction_to_analyze = dspy.InputField(desc="The instruction to analyze")
 
     has_chunk = dspy.OutputField(
         format=bool, desc="Is there a valid chunk that can be removed or rewritten from the instraction_to_analyze?"
@@ -599,6 +626,10 @@ class CUTIA(Teleprompter):
                 f"Final instructions length: {len(final_instructions)} (Original: {len(original_instructions)})"
             )
 
+            logger.info(f"Compression ratio: {len(final_instructions) / len(original_instructions):.2%}")
+
+            logger.info("=" * 80 + "\n")
+
             all_stats[i] = {
                 "original_length": len(original_instructions),
                 "final_length": len(final_instructions),
@@ -861,22 +892,28 @@ class CUTIA(Teleprompter):
                 chunk = self._clean_llm_string(getattr(pred, "chunk", None))
                 right = self._clean_llm_string(getattr(pred, "right", None))
 
-                # Strip any leaked DSPy markers
-                # left = self._strip_dspy_markers(left)
-                # chunk = self._strip_dspy_markers(chunk)
-                # right = self._strip_dspy_markers(right)
+                logger.info(f"[SPLIT] Node {node_id} - LLM returned:")
+                logger.info(f"  left: {left!r}")
+                logger.info(f"  chunk: {chunk!r}")
+                logger.info(f"  right: {right!r}")
 
-                logger.info(f"  Original prompt segment: {text}")
-                logger.info(f"  Left: {left}")
-                logger.info(f"  Chunk: {chunk}")
-                logger.info(f"  Right: {right}")
-                logger.info(f"  Proposed split: L={len(left)}, C={len(chunk)}, R={len(right)}")
+                # Reconstruct with smart delimiters for validation
+                # Create temporary node to use _smart_delim
+                temp_node = SegmentNode(node_id=node_id, depth=depth, text=text)
+                temp_node.left_text = left
+                temp_node.chunk_text = chunk
+                temp_node.right_text = right
 
-                # Enable LLM-based reconstruction validation
-                reconstructed = left + chunk + right
+                reconstructed = (
+                    left + temp_node._smart_delim(left, chunk) + chunk + temp_node._smart_delim(chunk, right) + right
+                )
+
+                logger.info(f"[VALIDATION] Node {node_id} - Checking reconstruction:")
+                logger.info(f"  Original (normalized): {' '.join(text.split())!r}")
+                logger.info(f"  Reconstructed (normalized): {' '.join(reconstructed.split())!r}")
 
                 if not self._validate_reconstruction(text, reconstructed):
-                    logger.warning(f"  Reconstruction validation failed at {node_id}")
+                    logger.warning(f"  ❌ Reconstruction validation failed at {node_id}")
                     continue  # Retry with next attempt
 
                 # If valid, populate node
@@ -885,7 +922,7 @@ class CUTIA(Teleprompter):
                 node.right_text = right
                 node.chunk_reason = getattr(pred, "chunk_reason", None)
 
-                logger.info(f"  Split accepted for {node_id}")
+                logger.info(f"  ✅ Split accepted for {node_id}")
 
                 # Recurse
                 if left and len(left) >= self.min_chunk_chars:
@@ -928,10 +965,28 @@ class CUTIA(Teleprompter):
                 chunk = self._clean_llm_string(getattr(pred, "chunk", None))
                 right = self._clean_llm_string(getattr(pred, "right", None))
 
-                # Enable LLM-based reconstruction validation
-                reconstructed = left + chunk + right
+                logger.info(f"[SPLIT-PARALLEL] Node {node.node_id} - LLM returned:")
+                logger.info(f"  left: {left!r}")
+                logger.info(f"  chunk: {chunk!r}")
+                logger.info(f"  right: {right!r}")
+
+                # Reconstruct with smart delimiters for validation
+                # Create temporary node to use _smart_delim
+                temp_node = SegmentNode(node_id=node.node_id, depth=node.depth, text=node.text)
+                temp_node.left_text = left
+                temp_node.chunk_text = chunk
+                temp_node.right_text = right
+
+                reconstructed = (
+                    left + temp_node._smart_delim(left, chunk) + chunk + temp_node._smart_delim(chunk, right) + right
+                )
+
+                logger.info(f"[VALIDATION-PARALLEL] Node {node.node_id} - Checking reconstruction:")
+                logger.info(f"  Original (normalized): {' '.join(node.text.split())!r}")
+                logger.info(f"  Reconstructed (normalized): {' '.join(reconstructed.split())!r}")
 
                 if not self._validate_reconstruction(node.text, reconstructed):
+                    logger.warning(f"  ❌ Reconstruction validation failed at {node.node_id} (parallel)")
                     continue  # Retry with next attempt
 
                 # If valid, populate node
@@ -939,6 +994,8 @@ class CUTIA(Teleprompter):
                 node.chunk_text = chunk
                 node.right_text = right
                 node.chunk_reason = getattr(pred, "chunk_reason", None)
+
+                logger.info(f"  ✅ Split accepted for {node.node_id} (parallel)")
 
                 # Create children placeholders (but don't recurse yet)
                 if left and len(left) >= self.min_chunk_chars:
