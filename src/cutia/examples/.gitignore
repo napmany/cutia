@@ -1,0 +1,6 @@
+# Ignore saved programs and experiments
+programs/
+
+# Keep .env template but not actual .env
+.env
+!.env.example
