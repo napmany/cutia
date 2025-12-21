@@ -340,7 +340,6 @@ def run_example(ai_provider="localai"):
         task_model=task_model,
         metric=letter_counting_metric,
         num_candidates=4,
-        verbose=True,
     )
 
     compressed_program = optimizer.compile(
