@@ -1,4 +1,4 @@
-<img width="1728" height="624" alt="cutia-logo" src="https://github.com/user-attachments/assets/3c114b55-44be-4299-9a53-d554bb734e0d" />
+<img width="1605" height="493" alt="cutia-3" src="https://github.com/user-attachments/assets/1951f7b6-2e05-4c5e-b2f3-17dd31123d02" />
 
 # CUTIA - Cut-Then-Implement-Augment Prompt Compressor
 
