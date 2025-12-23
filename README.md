@@ -6,7 +6,7 @@
   <em>A prompt optimizer that cuts token usage while maintaining quality.</em>
 </p>
 
-[![PyPI - Version](https://img.shields.io/pypi/v/cutia)](https://pypi.org/project/cutia/) ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/napmany/cutia/publish.yml)
+[![PyPI - Version](https://img.shields.io/pypi/v/cutia)](https://pypi.org/project/cutia/) [![PyPI Downloads](https://static.pepy.tech/badge/cutia)](https://pepy.tech/projects/cutia) ![GitHub Actions Workflow Status](https://img.shields.io/github/actions/workflow/status/napmany/cutia/publish.yml)
 
 ## Features
 
