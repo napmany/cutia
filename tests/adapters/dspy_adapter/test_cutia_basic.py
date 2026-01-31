@@ -71,7 +71,6 @@ def test_cutia_basic_compile():
         num_threads=1,  # Single-threaded for deterministic test
         num_candidates=1,  # Single candidate for speed
         traversal_strategy="post_order",
-        parallel_tree_building=False,  # Disable parallelism for deterministic test
         enable_cutting=True,
         rewrite_strategy="basic",
     )

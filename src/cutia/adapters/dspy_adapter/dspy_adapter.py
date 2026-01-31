@@ -273,7 +273,6 @@ class CUTIA(Teleprompter):
         node_decision_minibatch_size: int | None = None,
         top_k_candidates: int = 2,
         traversal_strategy: str = "pre_order",  # "post_order", "pre_order", "random"
-        parallel_tree_building: bool = True,
         tree_building_threads: int | None = None,
         enable_cutting: bool = True,
         rewrite_strategy: str = "basic",  # "basic", "multi_variant"
@@ -284,7 +283,6 @@ class CUTIA(Teleprompter):
         self.max_depth = max_depth
         self.min_chunk_chars = min_chunk_chars
         self.traversal_strategy = traversal_strategy
-        self.parallel_tree_building = parallel_tree_building
         self.tree_building_threads = tree_building_threads or num_threads
         self.enable_cutting = enable_cutting
         self.rewrite_strategy = rewrite_strategy
@@ -596,10 +594,7 @@ class CUTIA(Teleprompter):
             # Build Tree
             logger.info("Building segment tree...")
 
-            if self.parallel_tree_building:
-                root_node = self._build_tree_parallel(original_instructions, depth=0, node_id="root")
-            else:
-                root_node = self._build_tree(original_instructions, depth=0, node_id="root")
+            root_node = self._build_tree(original_instructions, depth=0, node_id="root")
 
             logger.info("Tree built.")
 
@@ -851,94 +846,6 @@ class CUTIA(Teleprompter):
             return ""
         return s
 
-    def _build_tree(self, text: str, depth: int, node_id: str) -> SegmentNode:
-        logger.info(f"Building tree node {node_id} (Depth {depth}, Length {len(text)})")
-
-        node = SegmentNode(node_id=node_id, depth=depth, text=text)
-
-        if depth >= self.max_depth:
-            logger.info(f"  Leaf: Max depth reached at {node_id}")
-            return node
-
-        if len(text) < self.min_chunk_chars:
-            logger.info(f"  Leaf: Text too short at {node_id} ({len(text)} < {self.min_chunk_chars})")
-            return node
-
-        # Call LLM to propose split
-        proposer = dspy.Predict(ProposeChunk)
-
-        for attempt in range(self.prompt_retries + 1):
-            try:
-                self.stats["llm_calls"] += 1
-                logger.info(f"  Requesting split for {node_id} (Attempt {attempt + 1})")
-
-                # Use BoundedChatAdapter for clear input/output boundaries
-                with dspy.settings.context(trace=[], lm=self.prompt_model, adapter=BoundedChatAdapter()):
-                    pred = proposer(instraction_to_analyze=text)
-                    logger.info(f"  Proposer prediction: {pred}")
-                    # if hasattr(self.prompt_model, "history") and self.prompt_model.history:
-                    #     logger.info(f"  Full Prompt: {self.prompt_model.history[-1]}")
-                    #     exit()
-
-                has_chunk = getattr(pred, "has_chunk", False)
-                if isinstance(has_chunk, str):
-                    has_chunk = has_chunk.lower() == "true"
-
-                if not has_chunk:
-                    logger.info(f"  No chunk proposed for {node_id}")
-                    return node
-
-                left = self._clean_llm_string(getattr(pred, "left", None))
-                chunk = self._clean_llm_string(getattr(pred, "chunk", None))
-                right = self._clean_llm_string(getattr(pred, "right", None))
-
-                logger.info(f"[SPLIT] Node {node_id} - LLM returned:")
-                logger.info(f"  left: {left!r}")
-                logger.info(f"  chunk: {chunk!r}")
-                logger.info(f"  right: {right!r}")
-
-                # Reconstruct with smart delimiters for validation
-                # Create temporary node to use _smart_delim
-                temp_node = SegmentNode(node_id=node_id, depth=depth, text=text)
-                temp_node.left_text = left
-                temp_node.chunk_text = chunk
-                temp_node.right_text = right
-
-                reconstructed = (
-                    left + temp_node._smart_delim(left, chunk) + chunk + temp_node._smart_delim(chunk, right) + right
-                )
-
-                logger.info(f"[VALIDATION] Node {node_id} - Checking reconstruction:")
-                logger.info(f"  Original (normalized): {' '.join(text.split())!r}")
-                logger.info(f"  Reconstructed (normalized): {' '.join(reconstructed.split())!r}")
-
-                if not self._validate_reconstruction(text, reconstructed):
-                    logger.warning(f"  ❌ Reconstruction validation failed at {node_id}")
-                    continue  # Retry with next attempt
-
-                # If valid, populate node
-                node.left_text = left
-                node.chunk_text = chunk
-                node.right_text = right
-                node.chunk_reason = getattr(pred, "chunk_reason", None)
-
-                logger.info(f"  ✅ Split accepted for {node_id}")
-
-                # Recurse
-                if left and len(left) >= self.min_chunk_chars:
-                    node.left_child = self._build_tree(left, depth + 1, f"{node_id}.L")
-
-                if right and len(right) >= self.min_chunk_chars:
-                    node.right_child = self._build_tree(right, depth + 1, f"{node_id}.R")
-
-                return node
-
-            except Exception as e:
-                logger.warning(f"Error building tree at {node_id}: {e}")
-
-        logger.info(f"  Failed to split node {node_id} after retries")
-        return node
-
     def _generate_split(self, node: SegmentNode) -> SegmentNode:
         """Attempt to split a node using LLM. Returns the node with split info populated."""
         if node.depth >= self.max_depth or len(node.text) < self.min_chunk_chars:
@@ -1080,7 +987,7 @@ class CUTIA(Teleprompter):
         node.rewrite_candidates = candidates
         return node
 
-    def _build_tree_parallel(self, text: str, depth: int, node_id: str) -> SegmentNode:
+    def _build_tree(self, text: str, depth: int, node_id: str) -> SegmentNode:
         """Build tree with parallel LLM calls for splits and rewrites."""
         root_node = SegmentNode(node_id=node_id, depth=depth, text=text)
 
