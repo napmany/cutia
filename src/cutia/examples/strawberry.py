@@ -3,11 +3,12 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import List, Tuple
 
 import datasets
 import dspy
+import List
 import tiktoken
+import Tuple
 from dotenv import load_dotenv
 
 from cutia.adapters.dspy_adapter import CUTIA

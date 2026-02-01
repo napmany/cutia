@@ -93,7 +93,12 @@ ignore = [
     "RUF003", # Ambiguous unicode character comment
     "UP006",  # Use list instead of List for type annotations
     "RUF005", # Consider unpacking instead of concatenation
+    "N806",   # Variables in functions should be lowercase
 ]
+
+# Enable auto-fix by default for safe fixes
+fixable = ["ALL"]
+unfixable = []
 
 [tool.ruff.lint.isort]
 known-first-party = ["cutia"]

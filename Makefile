@@ -32,11 +32,11 @@ help:
 # Code Quality
 lint:
 	@echo "Running ruff linting checks..."
-	uv run ruff check src/ tests/
+	uv run ruff check
 
 format:
 	@echo "Running ruff formatting..."
-	uv run ruff format src/ tests/
+	uv run ruff format
 
 typecheck:
 	@echo "Running pyright type checking..."
@@ -47,16 +47,15 @@ typecheck-watch:
 	uv run pyright --watch
 
 check:
-	@echo "Running linting and formatting checks..."
-	uv run ruff check src/ tests/
-	uv run ruff format --check src/ tests/
-	@echo "Running type checking..."
+	@echo "Running all checks..."
+	uv run ruff check
+	uv run ruff format --check
 	uv run pyright
 
 fix:
 	@echo "Auto-fixing linting issues and formatting code..."
-	uv run ruff check --fix src/ tests/
-	uv run ruff format src/ tests/
+	uv run ruff check --fix
+	uv run ruff format
 
 # Testing
 test:
