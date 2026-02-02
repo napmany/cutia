@@ -788,7 +788,7 @@ class CUTIA(Teleprompter):
                 self._increment_stat("llm_calls")
                 # Use BoundedChatAdapter for clear input/output boundaries
                 with dspy.settings.context(trace=[], lm=self.prompt_model, adapter=BoundedChatAdapter()):
-                    pred = proposer(instraction_to_analyze=node.text)
+                    pred = proposer(instruction_to_analyze=node.text)
 
                 has_chunk = getattr(pred, "has_chunk", False)
                 if isinstance(has_chunk, str):

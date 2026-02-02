@@ -3,7 +3,7 @@ import dspy
 
 class ProposeChunk(dspy.Signature):
     """
-    Analize instraction_to_analyze that is used for calls to an LM, then identify a chunk within the instraction_to_analyze that has the most potential to safely being removed or rewritten with the goal to make instraction_to_analyze shorter while keeping the task of the instraction_to_analyze fully clear and complete.
+    Analize instruction_to_analyze that is used for calls to an LM, then identify a chunk within the instruction_to_analyze that has the most potential to safely being removed or rewritten with the goal to make instruction_to_analyze shorter while keeping the task of the instruction_to_analyze fully clear and complete.
 
     IMPORTANT RULES:
     1. If no valid chunk can be found, respond with has_chunk=false and leave left, chunk, right as null.
@@ -18,19 +18,19 @@ class ProposeChunk(dspy.Signature):
     - Unnecessary explanations
     """
 
-    instraction_to_analyze = dspy.InputField(desc="The instruction to analyze")
+    instruction_to_analyze = dspy.InputField(desc="The instruction to analyze")
 
     has_chunk = dspy.OutputField(
-        format=bool, desc="Is there a valid chunk that can be removed or rewritten from the instraction_to_analyze?"
+        format=bool, desc="Is there a valid chunk that can be removed or rewritten from the instruction_to_analyze?"
     )
     left = dspy.OutputField(
-        desc="The EXACT left part of the instraction_to_analyze that appears before the chunk (no modifications), nullable"
+        desc="The EXACT left part of the instruction_to_analyze that appears before the chunk (no modifications), nullable"
     )
     chunk = dspy.OutputField(
-        desc="The EXACT chunk to potentially remove or rewrite from the instraction_to_analyze (no modifications), nullable"
+        desc="The EXACT chunk to potentially remove or rewrite from the instruction_to_analyze (no modifications), nullable"
     )
     right = dspy.OutputField(
-        desc="The EXACT right part of the instraction_to_analyze that appears after the chunk (no modifications), nullable"
+        desc="The EXACT right part of the instruction_to_analyze that appears after the chunk (no modifications), nullable"
     )
     chunk_reason = dspy.OutputField(desc="Brief explanation (1-2 sentences) of why a chunk was selected or not")
 

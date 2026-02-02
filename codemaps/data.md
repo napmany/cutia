@@ -151,7 +151,7 @@ rewrite_strategy="basic"     # "basic"|"multi_variant"
 ### ProposeChunk (Input/Output)
 ```
 Input:
-  instraction_to_analyze: str
+  instruction_to_analyze: str
 
 Output:
   has_chunk: bool
