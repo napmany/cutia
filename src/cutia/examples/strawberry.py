@@ -6,7 +6,7 @@ from pathlib import Path
 
 import datasets
 import dspy
-from typing import List
+import List
 import tiktoken
 import Tuple
 from dotenv import load_dotenv
