@@ -7,6 +7,7 @@ cut-or-rewrite decisions on each node.
 """
 
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -232,6 +233,7 @@ class CUTIA(Teleprompter):
         self.top_k_candidates = int(top_k_candidates)
 
         self.stats = {"nodes_visited": 0, "nodes_cut": 0, "nodes_rewritten": 0, "llm_calls": 0}
+        self._stats_lock = threading.Lock()
 
     def compile(
         self,
@@ -422,6 +424,16 @@ class CUTIA(Teleprompter):
             best["program"].compression_candidates = candidates
 
         return best["program"]
+
+    def _increment_stat(self, key: str, value: int = 1) -> None:
+        """Thread-safe increment of a stats counter.
+
+        Args:
+            key: The stats key to increment (e.g., "llm_calls")
+            value: Amount to add (default: 1)
+        """
+        with self._stats_lock:
+            self.stats[key] += value
 
     def _create_node_decision_minibatch(
         self,
@@ -773,7 +785,7 @@ class CUTIA(Teleprompter):
 
         for _ in range(self.prompt_retries):
             try:
-                self.stats["llm_calls"] += 1
+                self._increment_stat("llm_calls")
                 # Use BoundedChatAdapter for clear input/output boundaries
                 with dspy.settings.context(trace=[], lm=self.prompt_model, adapter=BoundedChatAdapter()):
                     pred = proposer(instraction_to_analyze=node.text)
@@ -844,7 +856,7 @@ class CUTIA(Teleprompter):
 
         for attempt in range(self.prompt_retries):
             try:
-                self.stats["llm_calls"] += 1
+                self._increment_stat("llm_calls")
                 current_candidates = []
 
                 if self.rewrite_strategy == "multi_variant":
@@ -1008,7 +1020,7 @@ class CUTIA(Teleprompter):
         validator = dspy.Predict(ValidateReconstruction)
 
         try:
-            self.stats["llm_calls"] += 1
+            self._increment_stat("llm_calls")
             with dspy.settings.context(trace=[], lm=self.prompt_model, adapter=BoundedChatAdapter()):
                 result = validator(original_text=original, reconstructed_text=reconstructed)
 
@@ -1049,7 +1061,7 @@ class CUTIA(Teleprompter):
         """
         Post-order traversal: Children -> Parent
         """
-        self.stats["nodes_visited"] += 1
+        self._increment_stat("nodes_visited")
 
         # 1. Process children first
         if node.left_child:
@@ -1066,7 +1078,7 @@ class CUTIA(Teleprompter):
         """
         Pre-order traversal: Parent -> Children
         """
-        self.stats["nodes_visited"] += 1
+        self._increment_stat("nodes_visited")
 
         # 1. Process this node first
         self._optimize_node(node, root, predictor, program, baseline_score, eval_set)
@@ -1126,7 +1138,7 @@ class CUTIA(Teleprompter):
 
             node.score_after = score
             node.saved_tokens = len(node.chunk_text.split())  # Approx
-            self.stats["nodes_cut"] += 1
+            self._increment_stat("nodes_cut")
             return True
         logger.info(f"  Decision: CUT rejected at {node.node_id}")
         logger.info(f"  Score: {score:.1f}% (Threshold: {threshold:.1f}%)")
@@ -1156,7 +1168,7 @@ class CUTIA(Teleprompter):
             target_len = int(len(node.chunk_text) * self.target_compression_ratio)
 
             try:
-                self.stats["llm_calls"] += 1
+                self._increment_stat("llm_calls")
                 with dspy.settings.context(trace=[], lm=self.prompt_model, adapter=BoundedChatAdapter()):
                     pred = rewriter(text=node.chunk_text, target_length=str(target_len))
                 candidates_to_try.append(pred.rewritten_text)
@@ -1194,7 +1206,7 @@ class CUTIA(Teleprompter):
 
                     node.score_after = score
                     node.saved_tokens = len(node.chunk_text.split()) - len(rewritten.split())
-                    self.stats["nodes_rewritten"] += 1
+                    self._increment_stat("nodes_rewritten")
                     return True
 
                 logger.info(f"  Decision: REWRITE rejected at {node.node_id} (Variant {i + 1})")
