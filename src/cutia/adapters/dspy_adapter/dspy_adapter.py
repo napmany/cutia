@@ -7,6 +7,7 @@ cut-or-rewrite decisions on each node.
 """
 
 import logging
+import threading
 from dataclasses import dataclass
 from typing import Literal, Optional
 
@@ -17,6 +18,7 @@ from dspy.teleprompt.utils import get_signature, set_signature
 from dspy.utils.parallelizer import ParallelExecutor
 
 from .bounded_chat_adapter import BoundedChatAdapter
+from .proposer import MultiVariantRewriteChunk, ProposeChunk, RewriteChunk, ValidateReconstruction
 
 logger = logging.getLogger(__name__)
 
@@ -152,78 +154,6 @@ class SegmentNode:
         return self.text
 
 
-class ProposeChunk(dspy.Signature):
-    """
-    Analize instraction_to_analyze that is used for calls to an LM, then identify a chunk within the instraction_to_analyze that has the most potential to safely being removed or rewritten with the goal to make instraction_to_analyze shorter while keeping the task of the instraction_to_analyze fully clear and complete.
-
-    IMPORTANT RULES:
-    1. If no valid chunk can be found, respond with has_chunk=false and leave left, chunk, right as null.
-    2. If there is a valid chunk - output exactly three parts: left, chunk, right
-    3. left + chunk + right must reconstruct the instruction (whitespace will be normalized automatically)
-    4. Do NOT add formatting, markers, or explanatory text in the fields.
-
-    The chunk you select could be:
-    - Redundant or overly verbose content
-    - Examples that could be shortened
-    - Repetitive phrases
-    - Unnecessary explanations
-    """
-
-    instraction_to_analyze = dspy.InputField(desc="The instruction to analyze")
-
-    has_chunk = dspy.OutputField(
-        format=bool, desc="Is there a valid chunk that can be removed or rewritten from the instraction_to_analyze?"
-    )
-    left = dspy.OutputField(
-        desc="The EXACT left part of the instraction_to_analyze that appears before the chunk (no modifications), nullable"
-    )
-    chunk = dspy.OutputField(
-        desc="The EXACT chunk to potentially remove or rewrite from the instraction_to_analyze (no modifications), nullable"
-    )
-    right = dspy.OutputField(
-        desc="The EXACT right part of the instraction_to_analyze that appears after the chunk (no modifications), nullable"
-    )
-    chunk_reason = dspy.OutputField(desc="Brief explanation (1-2 sentences) of why a chunk was selected or not")
-
-
-class RewriteChunk(dspy.Signature):
-    """
-    Rewrite the text to be shorter while preserving its essential meaning.
-    """
-
-    text = dspy.InputField()
-    target_length = dspy.InputField(desc="Approximate target length in characters")
-    rewritten_text = dspy.OutputField()
-
-
-class MultiVariantRewriteChunk(dspy.Signature):
-    """
-    Rewrite the text to be shorter while preserving its essential meaning.
-    Generate two variants:
-    1. A concise summary (high compression)
-    2. A detailed summary (moderate compression, preserving more details)
-    """
-
-    text = dspy.InputField()
-    concise_summary = dspy.OutputField(desc="High compression summary")
-    detailed_summary = dspy.OutputField(desc="Moderate compression summary with key details")
-
-
-class ValidateReconstruction(dspy.Signature):
-    """
-    Verify that the reconstructed text is semantically equivalent to the original text.
-
-    Check if the meaning, structure, and content are preserved. Minor formatting differences
-    (whitespace, punctuation) are acceptable, but the semantic content must match.
-    """
-
-    original_text = dspy.InputField(desc="The original text")
-    reconstructed_text = dspy.InputField(desc="The reconstructed text (left + chunk + right)")
-
-    reasoning = dspy.OutputField(desc="Brief explanation of whether they match semantically")
-    is_valid = dspy.OutputField(desc="'yes' if semantically equivalent, 'no' if different")
-
-
 class CUTIA(Teleprompter):
     """CUTIA - Tree-Structured Evaluate Cut-Then-Transform Compressor
 
@@ -235,8 +165,6 @@ class CUTIA(Teleprompter):
       for node decisions (following bootstrap aggregating theory)
     - Valset validation: All candidates evaluated on full valset for unbiased selection
     - Quality-first selection: Balances compression ratio with quality thresholds
-
-    See docs/trainset-minibatch-exploration-analysis.md for theoretical foundation.
 
     Args:
         node_decision_minibatch: Enable minibatch sampling for node decisions (default: True)
@@ -273,7 +201,6 @@ class CUTIA(Teleprompter):
         node_decision_minibatch_size: int | None = None,
         top_k_candidates: int = 2,
         traversal_strategy: str = "pre_order",  # "post_order", "pre_order", "random"
-        parallel_tree_building: bool = True,
         tree_building_threads: int | None = None,
         enable_cutting: bool = True,
         rewrite_strategy: str = "basic",  # "basic", "multi_variant"
@@ -284,7 +211,6 @@ class CUTIA(Teleprompter):
         self.max_depth = max_depth
         self.min_chunk_chars = min_chunk_chars
         self.traversal_strategy = traversal_strategy
-        self.parallel_tree_building = parallel_tree_building
         self.tree_building_threads = tree_building_threads or num_threads
         self.enable_cutting = enable_cutting
         self.rewrite_strategy = rewrite_strategy
@@ -307,58 +233,7 @@ class CUTIA(Teleprompter):
         self.top_k_candidates = int(top_k_candidates)
 
         self.stats = {"nodes_visited": 0, "nodes_cut": 0, "nodes_rewritten": 0, "llm_calls": 0}
-
-    def _create_node_decision_minibatch(
-        self,
-        trainset: list[dspy.Example],
-        valset_size: int,
-        candidate_seed: int,
-    ) -> list[dspy.Example]:
-        """Create a random minibatch from trainset for node decision making.
-
-        Following the analysis in docs/trainset-minibatch-exploration-analysis.md,
-        this method uses trainset for exploration (node decisions) while valset
-        is reserved for final candidate selection. This aligns with bootstrap
-        aggregating theory and proper train/val separation.
-
-        Args:
-            trainset: Training set to sample from (exploration data)
-            valset_size: Size of validation set (used for default minibatch size)
-            candidate_seed: Seed for this candidate (ensures different minibatch per candidate)
-
-        Returns:
-            Random subset of trainset for node decision evaluation
-        """
-        import random
-
-        # TODO: it should be valset by default?
-        if not self.node_decision_minibatch:
-            return trainset  # Use full trainset if minibatch disabled
-
-        # Determine minibatch size
-        if self.node_decision_minibatch_size is not None:
-            minibatch_size = self.node_decision_minibatch_size
-        else:
-            # Default: same size as valset (per user request)
-            # This allows exploration on trainset with similar sample size to final evaluation
-            minibatch_size = max(1, valset_size)
-
-        # Cap at trainset size
-        minibatch_size = min(minibatch_size, len(trainset))
-
-        # Create deterministic random sample using candidate seed
-        rng = random.Random(candidate_seed)
-        indices = rng.sample(range(len(trainset)), minibatch_size)
-
-        # Return minibatch in original order (sorted indices)
-        minibatch = [trainset[i] for i in sorted(indices)]
-
-        logger.info(
-            f"Created node decision minibatch from TRAINSET: {len(minibatch)}/{len(trainset)} examples "
-            f"(target size: {valset_size}, seed: {candidate_seed})"
-        )
-
-        return minibatch
+        self._stats_lock = threading.Lock()
 
     def compile(
         self,
@@ -372,7 +247,7 @@ class CUTIA(Teleprompter):
     ) -> dspy.Module:
         self.student = student
 
-        # Setup validation set (Match CUTO logic)
+        # Setup validation set
         if valset is None:
             valset_size = min(100, max(1, int(len(trainset) * 0.2)))
             cutoff = len(trainset) - valset_size
@@ -444,7 +319,7 @@ class CUTIA(Teleprompter):
             logger.info(f"{'=' * 60}")
 
             # Compress with specific seed and candidate-specific baseline
-            compressed = self._compress_with_seed(
+            compressed = self._compress(
                 student,
                 trainset,
                 valset,
@@ -550,7 +425,69 @@ class CUTIA(Teleprompter):
 
         return best["program"]
 
-    def _compress_with_seed(
+    def _increment_stat(self, key: str, value: int = 1) -> None:
+        """Thread-safe increment of a stats counter.
+
+        Args:
+            key: The stats key to increment (e.g., "llm_calls")
+            value: Amount to add (default: 1)
+        """
+        with self._stats_lock:
+            self.stats[key] += value
+
+    def _create_node_decision_minibatch(
+        self,
+        trainset: list[dspy.Example],
+        valset_size: int,
+        candidate_seed: int,
+    ) -> list[dspy.Example]:
+        """Create a random minibatch from trainset for node decision making.
+
+        Following the analysis in docs/trainset-minibatch-exploration-analysis.md,
+        this method uses trainset for exploration (node decisions) while valset
+        is reserved for final candidate selection. This aligns with bootstrap
+        aggregating theory and proper train/val separation.
+
+        Args:
+            trainset: Training set to sample from (exploration data)
+            valset_size: Size of validation set (used for default minibatch size)
+            candidate_seed: Seed for this candidate (ensures different minibatch per candidate)
+
+        Returns:
+            Random subset of trainset for node decision evaluation
+        """
+        import random
+
+        # TODO: it should be valset by default?
+        if not self.node_decision_minibatch:
+            return trainset  # Use full trainset if minibatch disabled
+
+        # Determine minibatch size
+        if self.node_decision_minibatch_size is not None:
+            minibatch_size = self.node_decision_minibatch_size
+        else:
+            # Default: same size as valset (per user request)
+            # This allows exploration on trainset with similar sample size to final evaluation
+            minibatch_size = max(1, valset_size)
+
+        # Cap at trainset size
+        minibatch_size = min(minibatch_size, len(trainset))
+
+        # Create deterministic random sample using candidate seed
+        rng = random.Random(candidate_seed)
+        indices = rng.sample(range(len(trainset)), minibatch_size)
+
+        # Return minibatch in original order (sorted indices)
+        minibatch = [trainset[i] for i in sorted(indices)]
+
+        logger.info(
+            f"Created node decision minibatch from TRAINSET: {len(minibatch)}/{len(trainset)} examples "
+            f"(target size: {valset_size}, seed: {candidate_seed})"
+        )
+
+        return minibatch
+
+    def _compress(
         self,
         student: dspy.Module,
         trainset: list[dspy.Example],
@@ -596,10 +533,7 @@ class CUTIA(Teleprompter):
             # Build Tree
             logger.info("Building segment tree...")
 
-            if self.parallel_tree_building:
-                root_node = self._build_tree_parallel(original_instructions, depth=0, node_id="root")
-            else:
-                root_node = self._build_tree(original_instructions, depth=0, node_id="root")
+            root_node = self._build_tree(original_instructions, depth=0, node_id="root")
 
             logger.info("Tree built.")
 
@@ -832,16 +766,6 @@ class CUTIA(Teleprompter):
             candidates, key=lambda x: (x.get(score_key, float("-inf")), -x["compression_ratio"]), reverse=True
         )
 
-    def _strip_dspy_markers(self, text: str) -> str:
-        """Remove DSPy field markers from text to prevent format instruction leakage."""
-        import re
-
-        # Remove markers like [[ ## fieldname ## ]]
-        text = re.sub(r"\[\[\s*##\s*\w+\s*##\s*\]\]", "", text)
-        # Remove format instructions about markers
-        text = re.sub(r"Respond with.*?field.*?\[\[.*?\]\].*?\.", "", text, flags=re.IGNORECASE | re.DOTALL)
-        return text.strip()
-
     def _clean_llm_string(self, val) -> str:
         """Clean string values from LLM, handling 'null' and None."""
         if val is None:
@@ -851,94 +775,6 @@ class CUTIA(Teleprompter):
             return ""
         return s
 
-    def _build_tree(self, text: str, depth: int, node_id: str) -> SegmentNode:
-        logger.info(f"Building tree node {node_id} (Depth {depth}, Length {len(text)})")
-
-        node = SegmentNode(node_id=node_id, depth=depth, text=text)
-
-        if depth >= self.max_depth:
-            logger.info(f"  Leaf: Max depth reached at {node_id}")
-            return node
-
-        if len(text) < self.min_chunk_chars:
-            logger.info(f"  Leaf: Text too short at {node_id} ({len(text)} < {self.min_chunk_chars})")
-            return node
-
-        # Call LLM to propose split
-        proposer = dspy.Predict(ProposeChunk)
-
-        for attempt in range(self.prompt_retries + 1):
-            try:
-                self.stats["llm_calls"] += 1
-                logger.info(f"  Requesting split for {node_id} (Attempt {attempt + 1})")
-
-                # Use BoundedChatAdapter for clear input/output boundaries
-                with dspy.settings.context(trace=[], lm=self.prompt_model, adapter=BoundedChatAdapter()):
-                    pred = proposer(instraction_to_analyze=text)
-                    logger.info(f"  Proposer prediction: {pred}")
-                    # if hasattr(self.prompt_model, "history") and self.prompt_model.history:
-                    #     logger.info(f"  Full Prompt: {self.prompt_model.history[-1]}")
-                    #     exit()
-
-                has_chunk = getattr(pred, "has_chunk", False)
-                if isinstance(has_chunk, str):
-                    has_chunk = has_chunk.lower() == "true"
-
-                if not has_chunk:
-                    logger.info(f"  No chunk proposed for {node_id}")
-                    return node
-
-                left = self._clean_llm_string(getattr(pred, "left", None))
-                chunk = self._clean_llm_string(getattr(pred, "chunk", None))
-                right = self._clean_llm_string(getattr(pred, "right", None))
-
-                logger.info(f"[SPLIT] Node {node_id} - LLM returned:")
-                logger.info(f"  left: {left!r}")
-                logger.info(f"  chunk: {chunk!r}")
-                logger.info(f"  right: {right!r}")
-
-                # Reconstruct with smart delimiters for validation
-                # Create temporary node to use _smart_delim
-                temp_node = SegmentNode(node_id=node_id, depth=depth, text=text)
-                temp_node.left_text = left
-                temp_node.chunk_text = chunk
-                temp_node.right_text = right
-
-                reconstructed = (
-                    left + temp_node._smart_delim(left, chunk) + chunk + temp_node._smart_delim(chunk, right) + right
-                )
-
-                logger.info(f"[VALIDATION] Node {node_id} - Checking reconstruction:")
-                logger.info(f"  Original (normalized): {' '.join(text.split())!r}")
-                logger.info(f"  Reconstructed (normalized): {' '.join(reconstructed.split())!r}")
-
-                if not self._validate_reconstruction(text, reconstructed):
-                    logger.warning(f"  ❌ Reconstruction validation failed at {node_id}")
-                    continue  # Retry with next attempt
-
-                # If valid, populate node
-                node.left_text = left
-                node.chunk_text = chunk
-                node.right_text = right
-                node.chunk_reason = getattr(pred, "chunk_reason", None)
-
-                logger.info(f"  ✅ Split accepted for {node_id}")
-
-                # Recurse
-                if left and len(left) >= self.min_chunk_chars:
-                    node.left_child = self._build_tree(left, depth + 1, f"{node_id}.L")
-
-                if right and len(right) >= self.min_chunk_chars:
-                    node.right_child = self._build_tree(right, depth + 1, f"{node_id}.R")
-
-                return node
-
-            except Exception as e:
-                logger.warning(f"Error building tree at {node_id}: {e}")
-
-        logger.info(f"  Failed to split node {node_id} after retries")
-        return node
-
     def _generate_split(self, node: SegmentNode) -> SegmentNode:
         """Attempt to split a node using LLM. Returns the node with split info populated."""
         if node.depth >= self.max_depth or len(node.text) < self.min_chunk_chars:
@@ -947,12 +783,12 @@ class CUTIA(Teleprompter):
         # Call LLM to propose split
         proposer = dspy.Predict(ProposeChunk)
 
-        for attempt in range(self.prompt_retries + 1):
+        for _ in range(self.prompt_retries):
             try:
-                self.stats["llm_calls"] += 1
+                self._increment_stat("llm_calls")
                 # Use BoundedChatAdapter for clear input/output boundaries
                 with dspy.settings.context(trace=[], lm=self.prompt_model, adapter=BoundedChatAdapter()):
-                    pred = proposer(instraction_to_analyze=node.text)
+                    pred = proposer(instruction_to_analyze=node.text)
 
                 has_chunk = getattr(pred, "has_chunk", False)
                 if isinstance(has_chunk, str):
@@ -1018,9 +854,9 @@ class CUTIA(Teleprompter):
 
         candidates = []
 
-        for attempt in range(self.prompt_retries + 1):
+        for attempt in range(self.prompt_retries):
             try:
-                self.stats["llm_calls"] += 1
+                self._increment_stat("llm_calls")
                 current_candidates = []
 
                 if self.rewrite_strategy == "multi_variant":
@@ -1080,7 +916,7 @@ class CUTIA(Teleprompter):
         node.rewrite_candidates = candidates
         return node
 
-    def _build_tree_parallel(self, text: str, depth: int, node_id: str) -> SegmentNode:
+    def _build_tree(self, text: str, depth: int, node_id: str) -> SegmentNode:
         """Build tree with parallel LLM calls for splits and rewrites."""
         root_node = SegmentNode(node_id=node_id, depth=depth, text=text)
 
@@ -1184,7 +1020,7 @@ class CUTIA(Teleprompter):
         validator = dspy.Predict(ValidateReconstruction)
 
         try:
-            self.stats["llm_calls"] += 1
+            self._increment_stat("llm_calls")
             with dspy.settings.context(trace=[], lm=self.prompt_model, adapter=BoundedChatAdapter()):
                 result = validator(original_text=original, reconstructed_text=reconstructed)
 
@@ -1225,7 +1061,7 @@ class CUTIA(Teleprompter):
         """
         Post-order traversal: Children -> Parent
         """
-        self.stats["nodes_visited"] += 1
+        self._increment_stat("nodes_visited")
 
         # 1. Process children first
         if node.left_child:
@@ -1242,7 +1078,7 @@ class CUTIA(Teleprompter):
         """
         Pre-order traversal: Parent -> Children
         """
-        self.stats["nodes_visited"] += 1
+        self._increment_stat("nodes_visited")
 
         # 1. Process this node first
         self._optimize_node(node, root, predictor, program, baseline_score, eval_set)
@@ -1302,7 +1138,7 @@ class CUTIA(Teleprompter):
 
             node.score_after = score
             node.saved_tokens = len(node.chunk_text.split())  # Approx
-            self.stats["nodes_cut"] += 1
+            self._increment_stat("nodes_cut")
             return True
         logger.info(f"  Decision: CUT rejected at {node.node_id}")
         logger.info(f"  Score: {score:.1f}% (Threshold: {threshold:.1f}%)")
@@ -1332,7 +1168,7 @@ class CUTIA(Teleprompter):
             target_len = int(len(node.chunk_text) * self.target_compression_ratio)
 
             try:
-                self.stats["llm_calls"] += 1
+                self._increment_stat("llm_calls")
                 with dspy.settings.context(trace=[], lm=self.prompt_model, adapter=BoundedChatAdapter()):
                     pred = rewriter(text=node.chunk_text, target_length=str(target_len))
                 candidates_to_try.append(pred.rewritten_text)
@@ -1370,7 +1206,7 @@ class CUTIA(Teleprompter):
 
                     node.score_after = score
                     node.saved_tokens = len(node.chunk_text.split()) - len(rewritten.split())
-                    self.stats["nodes_rewritten"] += 1
+                    self._increment_stat("nodes_rewritten")
                     return True
 
                 logger.info(f"  Decision: REWRITE rejected at {node.node_id} (Variant {i + 1})")

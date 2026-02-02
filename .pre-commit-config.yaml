@@ -10,7 +10,7 @@ repos:
     rev: v0.12.10
     hooks:
       - id: ruff-check
-        args: [--fix, --fix-only, --exit-non-zero-on-fix]
+        args: [--fix]
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/pre-commit-hooks

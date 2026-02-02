@@ -71,7 +71,6 @@ def test_cutia_basic_compile():
         num_threads=1,  # Single-threaded for deterministic test
         num_candidates=1,  # Single candidate for speed
         traversal_strategy="post_order",
-        parallel_tree_building=False,  # Disable parallelism for deterministic test
         enable_cutting=True,
         rewrite_strategy="basic",
     )
@@ -131,3 +130,55 @@ def test_cutia_traversal_strategies():
             traversal_strategy=strategy,
         )
         assert optimizer.traversal_strategy == strategy
+
+
+def test_cutia_stats_thread_safety():
+    """Test that stats increments are thread-safe under concurrent access."""
+    import threading
+
+    lm = DummyLM(["test"])
+
+    optimizer = CUTIA(
+        prompt_model=lm,
+        task_model=lm,
+        metric=simple_metric,
+    )
+
+    # Reset stats to known state
+    optimizer.stats = {"nodes_visited": 0, "nodes_cut": 0, "nodes_rewritten": 0, "llm_calls": 0}
+
+    num_threads = 8
+    increments_per_thread = 100
+
+    def increment_all_stats():
+        for _ in range(increments_per_thread):
+            optimizer._increment_stat("llm_calls")
+            optimizer._increment_stat("nodes_visited")
+            optimizer._increment_stat("nodes_cut")
+            optimizer._increment_stat("nodes_rewritten")
+
+    threads = [threading.Thread(target=increment_all_stats) for _ in range(num_threads)]
+
+    # Start all threads
+    for t in threads:
+        t.start()
+
+    # Wait for completion
+    for t in threads:
+        t.join()
+
+    expected = num_threads * increments_per_thread
+
+    # All counters should have the exact expected count (no lost increments)
+    assert optimizer.stats["llm_calls"] == expected, (
+        f"llm_calls: expected {expected}, got {optimizer.stats['llm_calls']} "
+    )
+    assert optimizer.stats["nodes_visited"] == expected, (
+        f"nodes_visited: expected {expected}, got {optimizer.stats['nodes_visited']}"
+    )
+    assert optimizer.stats["nodes_cut"] == expected, (
+        f"nodes_cut: expected {expected}, got {optimizer.stats['nodes_cut']}"
+    )
+    assert optimizer.stats["nodes_rewritten"] == expected, (
+        f"nodes_rewritten: expected {expected}, got {optimizer.stats['nodes_rewritten']}"
+    )
